@@ -1,0 +1,359 @@
+---
+title: "Seattle Restaurant Analysis"
+author: "Kelsey Cronce"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    self_contained: true
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6,
+  fig.align = "center"
+)
+```
+# Executive Summary
+The goal of this project is to identify which restaurants in downtown Seattle are best suited for solo diners, based on patterns found in online reviews. While many restaurant recommendation focus on groups or general popularity, this analysis aims to highlight factors that specifically contribute to a comfortable and enjoyable solo dining experience.
+
+Using a dataset compiled from Yelp and Google reviews, I explored how attributes such as noise level, service quality, and price range influence overall sentiment. Special attention was given to keywords and themes related to solo dining, such as comfort, seating availability, and atmosphere.
+
+Through exploratory data analysis, this project seeks to uncover trends that distinguish solo-friendly restaurants from those better suited for groups. The findings are intended to support more personalized dining recommendations and demonstrate how unstructured review data can be transformed into meaningful insights.
+
+Ultimately, this project showcase skills in data collection, cleaning, and exploratory analysis,while also reflecting a practical, real-world application: helping individuals confidently choose where to dine alone.
+
+``` {r}
+# Load libraries needed
+library(readxl)
+library(dplyr)
+library(stringr)
+library(janitor)
+library(ggplot2)
+library(ggrepel)
+
+# Load data
+data <- readxl::read_excel("restaurants.xlsx")
+
+# Inspect the data
+glimpse(data)
+summary(data)
+```
+# Data Collection
+This dataset was constructed using restaurant data from Yelp and Google Reviews, focusing specifically on establishments located in the Belltown neighborhood of Seattle. Belltown was selected due to its high density of restaurants and diverse dining environments, making it ideal area for comparative analysis.
+
+To ensure consistency across observations, a standardized sampling approach was used. For each restaurant, the first five available reviews from both Yelp and Google were collected. This approach allowed for a balanced representation of customer feedback across platforms while keeping the dataset manageable for analysis.
+
+The dataset includes variables such as restaurant name, cuisine type, price level, overall ratings from both platforms, and review counts, Additionally, review text was collected to support qualitative analysis and feature extraction.
+
+While this sampling method may not capture the full distribution of all reviews, it provides a structured and reproducible foundation for identifying patterns in customer sentiment and dining experience and characteristics.
+
+The dataset includes 10 restaurants that met the defined selection criteria within the Belltown area of the time of data collection.
+
+Future iterations of this project could expand the sample size to include more reviews per restaurant or additional neighborhoods for broader generalization.
+
+# Clean the data
+``` {r}
+# Clean column names
+data <- data %>% clean_names()
+
+# Drop neighborhood since everything is in Belltown
+data <- data %>% select(-neighborhood)
+
+# Clean price level
+data <- data %>%
+  mutate(
+    price_level = na_if(price_level, "NA"),
+    price_numeric = case_when(
+      price_level == "$" ~ 1,
+      price_level == "$$" ~ 2,
+      price_level == "$$$" ~ 3,
+      price_level == "$$$" ~ 4,
+      TRUE ~ NA_real_
+    )
+  )
+
+# Create average rating
+data <- data %>%
+  mutate(
+    average_rating = (overall_rating_google + overall_rating_yelp) / 2
+  )
+
+# Create popularity score
+data <- data %>%
+  mutate(
+    total_reviews = google_review_count + yelp_review_count,
+    log_reviews = log(total_reviews)
+  )
+
+# Confirm it exists
+names(data)
+
+# Normalize review counts
+data <- data %>%
+  mutate(
+    log_reviews = log(total_reviews)
+  )
+
+# Clean cuisine entries
+data <- data %>%
+  mutate(
+    cuisine = str_to_lower(cuisine),
+    cuisine = str_trim(cuisine)
+  )
+
+# Pull columns I want
+data <- data %>%
+  select(
+    restaurant_name,
+    address,
+    cuisine,
+    overall_rating_yelp,
+    overall_rating_google,
+    price_level,
+    google_review_count,
+    yelp_review_count,
+    average_rating,
+    price_numeric,
+    total_reviews,
+    log_reviews
+  )
+
+# Final check
+glimpse(data)
+summary(data)
+```
+Several prepossessing steps were performed to prepare the dataset for analysis. Column names were standardized using the 'janitor' package to ensure consistency and usability within R.
+
+The 'neighborhood' variable was removed, as all observations were limited to Belltown and did not provide additional analytical value.
+
+The 'price_level' variable contained inconsistent formatting, including text-based "NA" values. These were converted to proper missing values, and a new numeric variable ('price_numeric') was created to enable quantitative analysis.
+
+To better compare restaurant performance across platforms, and average rating ('avg_rating') was calculated using Yelp and Google ratings. Additionally, total review counts were combine into a single 'total_reviews' variable to represent overall popularity.
+
+Cuisine labels were standardized by converting text to lowercase and removing extra whitespace.
+
+These transformations resulted in a clean and structured dataset suitable for exploratory analysis.
+
+# Rating vs Price
+```{r}
+# Prepare data
+data <- data %>%
+  mutate(
+    average_rating = rowMeans(
+      select(., overall_rating_google, overall_rating_yelp),
+      na.rm = TRUE
+    ),
+    price_label = case_when(
+      price_numeric == 1 ~ "$",
+      price_numeric == 2 ~ "$$",
+      price_numeric == 3 ~ "$$$",
+      price_numeric == 4 ~ "$$$$",
+      TRUE ~ NA_character_
+    ),
+    price_label = factor(price_label, levels = c("$", "$$", "$$$", "$$$$"))
+  )
+
+# Remove NA from plot
+plot_data <- data %>%
+  filter(!is.na(price_label), !is.na(average_rating))
+
+# Plot the data
+ggplot(plot_data, aes(x = price_label, y = average_rating, fill = price_label)) +
+  geom_boxplot(
+    alpha = 0.7,
+    width = 0.6,
+    outlier.color = "red",
+    outlier.alpha = 0.6
+  ) +
+  geom_jitter(
+    width = 0.08,
+    alpha = 0.4,
+    size = 2,
+    color = "black"
+  ) +
+  scale_fill_brewer(palette = "Blues") +
+  labs(
+    title = "Do More Expensive Restaurants Deliver Better Ratings?",
+    subtitle = "Comparison of Average Ratings Across Price Tiers in Belltown",
+    x = "Price Tier",
+    y = "Average Rating"
+  ) +
+  ylim(3.8, 4.7) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12, color = "gray40"),
+    axis.text = element_text(color = "black")
+  )
+```
+This visualization compares average restaurant ratings across mid-range and higher-end price levels. While higher-priced restaurants show slightly higher maximum ratings, the median ratings across both categories are nearly identical. Additionally, the wider spread among 3 Price point restaurants suggests greater variability in customer experience. Notably, the presence of a lower-rated outlier in the higher price category indicates that higher cost does not consistently translate to better quality.
+
+# Popularity vs Rating
+```{r}
+ggplot(data, aes(x = log_reviews, y = average_rating)) +
+  geom_point(
+    alpha = 0.7,
+    size = 3,
+    color = "steelblue"
+  ) +
+  geom_smooth(
+    method = "lm",
+    se = FALSE,
+    color = "black",
+    linewidth = 0.8
+  ) +
+  labs(
+    title = "Are More Popular Restaurants Rated Higher?",
+    subtitle = "Relationship Between Review Volume and Average Rating in Belltown",
+    x = "Log of Total Reviews",
+    y = "Average Rating"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12, color = "gray40"),
+    axis.text = element_text(color = "black")
+  )
+```
+The scatterplot reveals a slight negative relationship between review volume and average rating. As the number of reviews increases, average ratings ten to decrease slightly.However, the relationship is weak, and there is considerable variability across restaurants. This suggests that more popular restaurants are not necessarily rated higher and may, in some cases, receive more critical or diverse feedback due to higher customer volume.
+
+One possible explanation is that restaurants with more reviews attract a wider range of customers, leading to more varied opinions and slightly lower average ratings. In contrast, less-reviewed restaurants may have more selective or niche audiences, resulting in higher ratings.
+
+# Hidden Gems - Which restaurants are highly rated but not very popular?
+```{r}
+# Recreate columns
+data <- data %>%
+  mutate(
+    # price numeric
+    price_numeric = case_when(
+      price_level == "$" ~ 1,
+      price_level == "$$" ~ 2,
+      price_level == "$$$" ~ 3,
+      price_level == "$$$$" ~ 4,
+      TRUE ~ NA_real_
+    ),
+    
+    # total + log reviews
+    total_reviews = google_review_count + yelp_review_count,
+    log_reviews = log1p(total_reviews),
+    
+    # average rating
+    average_rating = rowMeans(
+      select(., overall_rating_google, overall_rating_yelp),
+      na.rm = TRUE
+    )
+  )
+
+# Create thresholds
+avg_rating_cutoff <- mean(data$average_rating, na.rm = TRUE)
+review_cutoff <- mean(data$log_reviews, na.rm = TRUE)
+
+# Label hidden gems
+data <- data %>%
+  mutate(
+    gem_status = case_when(
+      average_rating >= avg_rating_cutoff & log_reviews < review_cutoff ~ "Hidden Gem",
+      TRUE ~ "Other"
+    )
+  )
+
+# Plot
+ggplot(data, aes(x = log_reviews, y = average_rating, color = gem_status)) +
+  geom_point(size = 3, alpha = 0.8) +
+  labs(
+    title = "Identifying Hidden Gems in Belltown Restaurants",
+    subtitle = "Highly Rated but Less Popular Restaurants",
+    x = "Log of Total Reviews",
+    y = "Average Rating",
+    color = "Category"
+  ) +
+  theme_minimal(base_size = 13)
+
+# What restaurants are hidden gems?
+hidden_gems <- data %>%
+  filter(gem_status == "Hidden Gem")
+
+# View
+hidden_gems
+```
+The hidden gems analysis aimed to identify restaurants in Belltown that offer high customer satisfaction but have not yet gained widespread popularity. These restaurants were defined as those with above-average ratings and below-average review counts.
+
+The results revealed a small number of establishments that meet this criterion, indicating that most highly rated restaurants in the area have already accumulated a significant number of reviews. However, the presence of even a few hidden gems suggests that there are still under-recognized dining options that deliver strong customer experiences.
+
+These restaurants appear in the upper-left region of the scatterplot, representing high average ratings combined with relatively low review volume. This positioning highlights their potential as quality establishments that may not yet be widely discovered by the general public.
+
+Overall, the hidden gems analysis demonstrates that while popularity often follows quality, it is not always immediate. Some restaurants provide excellent dining experiences but remain less visible, offering valuable opportunities for customers seeking unique or less crowded options.
+
+# Build an Introvert Score
+```{r}
+# Create an introvert friendly label
+data <- data %>%
+  mutate(
+    introvert_spot = case_when(
+      average_rating >= mean(average_rating, na.rm = TRUE) &
+      log_reviews < mean(log_reviews, na.rm = TRUE) ~ "Introvert Friendly",
+      TRUE ~ "Other"
+    )
+  )
+# Visualize it
+ggplot(data, aes(x = log_reviews, y = average_rating, color = introvert_spot)) +
+  geom_point(size = 3, alpha = 0.8) +
+  
+ geom_text_repel(
+  data = subset(data, introvert_spot == "Introvert Friendly"),
+  aes(label = restaurant_name),
+  size = 3,
+  max.overlaps = 20,
+  box.padding = 0.3,
+  point.padding = 0.2,
+  segment.color = "gray50"
+)
+  
+  labs(
+    title = "Introvert-Friendly Restaurants in Belltown",
+    subtitle = "Highly Rated and Less Crowded Dining Options",
+    x = "Log of Total Reviews",
+    y = "Average Rating",
+    color = "Category"
+  ) +
+  theme_minimal(base_size = 13)
+  
+# List the actual spots
+data %>%
+  filter(introvert_spot == "Introvert Friendly") %>%
+  select(restaurant_name, cuisine, average_rating, total_reviews) %>%
+  arrange(desc(average_rating))
+```
+
+To better align the project iwth its original goal, the analysis was extended to identify restaurants that may appeal to introverted diners seeking quieter, less croded spaces. In this context, an "introvert-friendly" restaurant was defined as one with an above-average cutomer rating and a below-average number of total reviews. This approach assumes that highly rated restaurants with lower review volume may offer a more relaxed and less crowded dining experience.
+
+The visualization highlights several restaurants that fit this definition, including Queen City, Kalabaw Bar & Kitchen, and Kayava. These restaurants stand out because they combine strong customer satisfaction with lower visibility compared to more heavily reviewed locations.
+
+This findind suggests that the best option for solo or introverted diners may not always be the most popular restaurant. Instead, some ofthe strongest dining experiences may be found in places that are slightly less discovered, where the atmosphere may feel calmer and more comfortable. Be reframing the analysis in this way, the project moves beyond general restaurant quality and focuses on a more specific, user-centered dining need.
+
+# Executive Summary
+The project analyzed restaurant data in Seattle's Belltown neighborhood to explore how price, popularity, and customer ratings related to one another, while also identifying dining options that align with a more specific goal: finding high-quality, less croweded spaces suitable for introverted diners.
+
+The anlaysis revealed that price is not a strong predicor of restaurant quality. Mid-priced and higher-priced restaurants showed ver similar rating distributions, indicating that spending more does not necessarily result in a better dining experience.
+
+When examining popularity, measure by the number of reviews, the results showed a slight negative relationship between review volume and average rating. This suggests that more popular restaurants are not consistently rated higher and may receive more varied feedback due to a broader customer base.
+
+Building on these findings, a "hidden gem" analysis identified restaurants that are highly rated but less wedely reviewed. These establishments represent strong dining options that may not yet have widespread recognition.
+
+Finally, the analysis was reframed through the lens of introvert-friendly dining, highlighting restaurants that combine high ratings with lower levels of popularity. Locations such as Queen City, Kalabaw Bar & Kitchen, and Kayava emerged as ideal options, offereing experiences in potentially quieter and less crowded environments.
+
+Overall, the results suggest that the best dining expereiences are not always found in the most expensive or most popular locations. Instead, some of the most appealing options, particularly for solo or introverted diners, may be found among less visible but highly rated restaurants.
+
+
+
+
+  
+  
+
